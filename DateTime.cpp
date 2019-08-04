@@ -1,4 +1,3 @@
-#include "ProjSettings.h"
 #include "DateTime.h"
 
 #define DS1307_ADDRESS 0x68
@@ -73,7 +72,7 @@ static unsigned long makeTime(DateTime aDate)
     return seconds;
 }
   
-static int DiffinDays(DateTime aDate1, DateTime aDate2)
+int DiffinDays(DateTime aDate1, DateTime aDate2)
 {
   uint16_t days1 = date2days(aDate1);
   uint16_t days2 = date2days(aDate2);
@@ -195,7 +194,7 @@ DateTime::DateTime (uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uin
   Set (year,month,day,hour,min);
 }
 
-void DateTime::Set (uint16_t year, uint8_t month, uint8_t day, uint8_t hour =0, uint8_t min =0)
+void DateTime::Set (uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t min)
 {
   Clear();
   if (year >= 2000)
