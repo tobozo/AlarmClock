@@ -1,3 +1,4 @@
+
 #include "dcf77.h"
 
 #define LENGTH_ONE   150
@@ -66,9 +67,10 @@ byte Dcf77::Run() {
   }
 
   if (((now - mTimePrevBit) > NEW_MSG_TIME) && (mBitCounter!=0)) {
-    // start of message (>1 sec after last bit)
-    log_d("MSG START");
+    log_d("MSG COMPLETE");
+    //bool lastBit = mMessage[mBitCounter-1];
     checkMessage(mMessage);
+    // start of message (>1 sec after last bit)
     lResult = DCF_STATE_NEWMINUTE;		// new complete minute
 
     if( addToWeatherInfo(mMessage))	{ // maybe even complete weather info
@@ -76,12 +78,12 @@ byte Dcf77::Run() {
       // calculate area which is related to the time of the message
       mWeatherArea = getArea(mTime);
       mWeatherSection = getSection(mTime);
-      log_d("Weather info collected for area #%d, previsions for for the next %d hours", mWeatherArea, mWeatherSection);
-      int i=0;
-      for( ; i<WEATHER_SIZE; i++) {
-        weatherData[i] = mWeatherData[i] ? '0' : '1';
-      }
     }
+    /*
+    for(uint8_t i=0;i<MSG_SIZE;i++) {
+      mMessage[i] = false;
+    }
+    */
     mBitCounter = 0;
   }
 
@@ -89,7 +91,7 @@ byte Dcf77::Run() {
   return lResult;
 }
 	
-DateTime Dcf77::GetTime(void) {
+DCFDateTime Dcf77::GetTime(void) {
 	return mTime;
 }
 
@@ -650,7 +652,7 @@ void Dcf77::Decrypt(byte* cipher, byte* key, byte* result) {
 }
 
 
-byte Dcf77::getArea(DateTime aTime)  {
+byte Dcf77::getArea(DCFDateTime aTime)  {
   unsigned int minutes = getMinutesSince2200(aTime);
   // each block of data takes 3 minutes
   // in total 60 areas
@@ -660,7 +662,7 @@ byte Dcf77::getArea(DateTime aTime)  {
   return area;
 }
 
-byte Dcf77::getSection(DateTime aTime) {
+byte Dcf77::getSection(DCFDateTime aTime) {
   unsigned int minutes = getMinutesSince2200(aTime);
   // each block of data takes 3 minutes
   // in total 60 areas
@@ -668,7 +670,7 @@ byte Dcf77::getSection(DateTime aTime) {
   return section;
 }
 
-unsigned int Dcf77::getMinutesSince2200(DateTime aTime) {
+unsigned int Dcf77::getMinutesSince2200(DCFDateTime aTime) {
   int hours = aTime.hh;
   hours--;    // CET -> UTC
   //if (aTime.dst)  // correction DST

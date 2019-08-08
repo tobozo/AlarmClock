@@ -1,4 +1,4 @@
-#include "DateTime.h"
+#include "DCFDateTime.h"
 
 #define DS1307_ADDRESS 0x68
 #define SECONDS_PER_DAY 86400L
@@ -6,7 +6,7 @@
 #define SECONDS_FROM_1970_TO_2000 946684800
 
 ////////////////////////////////////////////////////////////////////////////////
-// utility code, some of this could be exposed in the DateTime API if needed
+// utility code, some of this could be exposed in the DCFDateTime API if needed
 
 #define LEAP_YEAR(_year) ((_year%4)==0)
 const uint8_t daysInMonth [] PROGMEM = { 31,28,31,30,31,30,31,31,30,31,30,31 }; //has to be const or compiler compaints
@@ -28,12 +28,12 @@ uint16_t date2days(uint16_t y, uint8_t m, uint8_t d)
         ++days;
     return days + 365 * y + (y + 3) / 4 - 1;
 }
-static uint16_t date2days(DateTime aDate)
+static uint16_t date2days(DCFDateTime aDate)
 {
   return date2days(aDate.yOff, aDate.m, aDate.d);
 }
 
-static unsigned long makeTime(DateTime aDate)
+static unsigned long makeTime(DCFDateTime aDate)
 {
 // converts time components to time_t
 // note year argument is full four digit year (or digits since 2000), i.e.1975, (year 8 is 2008)
@@ -72,7 +72,7 @@ static unsigned long makeTime(DateTime aDate)
     return seconds;
 }
   
-int DiffinDays(DateTime aDate1, DateTime aDate2)
+int DiffinDays(DCFDateTime aDate1, DCFDateTime aDate2)
 {
   uint16_t days1 = date2days(aDate1);
   uint16_t days2 = date2days(aDate2);
@@ -81,11 +81,11 @@ int DiffinDays(DateTime aDate1, DateTime aDate2)
   return days1-days2;
 }
 
-byte GetMoonPhase(DateTime aDate)
+byte GetMoonPhase(DCFDateTime aDate)
 {
   // Note that new moon is 1 i.s.o. zero
 	float MaanCyclus = 29.530589;
-	DateTime NieuweMaan(5,5,7,0,0);//,0);  //"June 7, 2005 00:00:00");  2005-2000=5
+	DCFDateTime NieuweMaan(5,5,7,0,0);//,0);  //"June 7, 2005 00:00:00");  2005-2000=5
 	//float AantalDagen = (float)DiffinDays(aDate,NieuweMaan);
 	//float CyclusDeel = AantalDagen/MaanCyclus - floor(AantalDagen/MaanCyclus); // Alleen de decimalen
   //return round(MaanCyclus*CyclusDeel);
@@ -94,7 +94,7 @@ byte GetMoonPhase(DateTime aDate)
   return int(MaanCyclus*CyclusDeel+0.5);
 }
 
-DateTime getSunTime(DateTime aDate, bool aRiseNotSet)
+DCFDateTime getSunTime(DCFDateTime aDate, bool aRiseNotSet)
 {
 	float eqtime,hars;
 	float doy = date2days(aDate);//aDate.yOff+2000, aDate.m, aDate.d);
@@ -128,7 +128,7 @@ DateTime getSunTime(DateTime aDate, bool aRiseNotSet)
 	if (IsDst(aDate))
 	  x++;
 
-  DateTime lSunTime;
+  DCFDateTime lSunTime;
 
   int hrs = (int)(x);
   x -= hrs; // remove integral part
@@ -148,16 +148,17 @@ DateTime getSunTime(DateTime aDate, bool aRiseNotSet)
   return lSunTime;
 }
 
-DateTime GetSunRise(DateTime aDate)
+DCFDateTime GetSunRise(DCFDateTime aDate)
 {
   return getSunTime(aDate, true);
 }
-DateTime GetSunSet(DateTime aDate)
+
+DCFDateTime GetSunSet(DCFDateTime aDate)
 {
   return getSunTime(aDate, false);
 }
 
-bool IsDst(DateTime aDate)
+bool IsDst(DCFDateTime aDate)
 {
   return IsDst(aDate.yOff, aDate.m, aDate.d);
 }
@@ -181,20 +182,20 @@ bool IsDst(uint16_t aY, uint8_t aM, uint8_t aD)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// DateTime implementation - ignores time zones and DST changes
+// DCFDateTime implementation - ignores time zones and DST changes
 // NOTE: also ignores leap seconds, see http://en.wikipedia.org/wiki/Leap_second
 
-DateTime::DateTime ()
+DCFDateTime::DCFDateTime ()
 {
   Clear();
 }
 
-DateTime::DateTime (uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t min)
+DCFDateTime::DCFDateTime (uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t min)
 {
   Set (year,month,day,hour,min);
 }
 
-void DateTime::Set (uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t min)
+void DCFDateTime::Set (uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t min)
 {
   Clear();
   if (year >= 2000)
@@ -213,7 +214,7 @@ void DateTime::Set (uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uin
   }
 }
 
-void DateTime::Clear()
+void DCFDateTime::Clear()
 {
     yOff = 0;
     m = 0;
@@ -222,23 +223,23 @@ void DateTime::Clear()
     mm = 0;
 }
 
-bool DateTime::IsValid()
+bool DCFDateTime::IsValid()
 {
   return (d != 0);
 }
 
 static char mStr[12];
-const char* DateTime::GetTimeStr()
+const char* DCFDateTime::GetTimeStr( const char* separator)
 {
-  sprintf(mStr,"%02d:%02d",hh,mm);
+  sprintf(mStr,"%02d%s%02d",hh,separator,mm);
   return mStr;
 }
-const char* DateTime::GetDateStr()
+const char* DCFDateTime::GetDateStr()
 {
   sprintf(mStr," %02d-%02d-%4d",d,m,year());
   return mStr;
 }
-bool DateTime::operator==(const DateTime theOther)
+bool DCFDateTime::operator==(const DCFDateTime theOther)
 {
   return ((yOff == theOther.yOff) &&
           (m == theOther.m) &&
@@ -246,7 +247,7 @@ bool DateTime::operator==(const DateTime theOther)
           (hh == theOther.hh) &&
           (mm == theOther.mm));
 }
-bool DateTime::operator!=(const DateTime theOther)
+bool DCFDateTime::operator!=(const DCFDateTime theOther)
 {
   return !(*this==theOther);
 }
@@ -259,7 +260,7 @@ static uint8_t conv2d(const char* p)
     return 10 * v + *++p - '0';
 }
 
-uint8_t DateTime::dayOfWeek() const
+uint8_t DCFDateTime::dayOfWeek() const
 {
   uint16_t day = date2days(yOff, m, d);
   day = (day + 6) % 7; // Jan 1, 2000 is a Saturday, i.e. returns 6

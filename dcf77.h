@@ -1,7 +1,7 @@
 #ifndef DFC77_H
 #define DFC77_H
 
-#include "DateTime.h"
+#include "DCFDateTime.h"
 
 #define MSG_SIZE      		60
 #define WEATHER_SIZE  		82
@@ -22,9 +22,12 @@ class Dcf77 {
   	byte GetWeatherArea();
   	byte GetWeatherSection();
   	
-  	DateTime GetTime(void);
+  	DCFDateTime GetTime(void);
     bool TimeIsValid();
-    char weatherData[WEATHER_SIZE+1];
+    //char weatherData[WEATHER_SIZE+1];
+    bool mMessage[MSG_SIZE];
+    //bool mMessageHistory[2][MSG_SIZE];
+    byte mBitCounter;
   
   private:
   
@@ -43,25 +46,24 @@ class Dcf77 {
     void DoPbox(struct DataContainer* container);
     void Decrypt(byte* cipher, byte* key, byte* result);
     
-    byte getArea(DateTime aTime);
-    byte getSection(DateTime aTime);
-    unsigned int getMinutesSince2200(DateTime aTime);
+    byte getArea(DCFDateTime aTime);
+    byte getSection(DCFDateTime aTime);
+    unsigned int getMinutesSince2200(DCFDateTime aTime);
   
     bool mPrevDcf;
     unsigned long mTimePosEdge;
     unsigned long mTimeNegEdge;
-    byte mBitCounter;
     bool mBitReceived;
     unsigned long mTimePrevBit;
     
-    bool mMessage[MSG_SIZE];
+
     bool mWeatherData[WEATHER_SIZE];
     byte mWeatherArea;
     byte mWeatherSection;
     
     int mPort;
     
-    DateTime mTime;
+    DCFDateTime mTime;
     bool mTimeValid;
 };
 

@@ -1,16 +1,58 @@
 #include "build.h"
-#include "DateTime.h"
+#include "DCFDateTime.h"
 #include "dcf77.h"
+#include "rtc.h"
+
+#define FS_NO_GLOBALS
+#include <FS.h>
+
+// JPEG decoder library
+#include <JPEGDecoder.h>
+#include "img.h"
+
+#include <Adafruit_GFX.h>                                  // Core graphics library
+#include <Adafruit_ST7735.h>                               // Hardware-specific library
+
+//#include <mySD.h>
+
+
+
+//#include <ssd1327.h> // https://github.com/bitbank2/ssd1327 ( also requires: https://github.com/bitbank2/BitBang_I2C )
+//#include <U8g2lib.h>
+//U8G2_SSD1327_EA_W128128_F_SW_I2C display(U8G2_R0, /* cs=*/ 32, /* dc=*/ 25, /* reset=*/ U8X8_PIN_NONE);
 
 #define DEBUG 1
 
 // DCF77 from https://www.tindie.com/products/universalsolder/atomic-clock-am-receiver-kit-dcf77-wwvb-msf-jjy60/
+
+/**
+// DEV MODULE PINOUT
 #define RADIO_DIGITAL_PIN 14    // OUT
 #define RADIO_POWERDOWN_PIN 26  // PDN
 #define RADIO_AUTOGAIN_PIN 33   // AON
+*/
+
+// TTGO MODULE PINOUT
+#define RADIO_DIGITAL_PIN 21    // OUT
+#define RADIO_POWERDOWN_PIN 26  // PDN
+#define RADIO_AUTOGAIN_PIN 32   // AON
+
+#define RTC_SDA 33
+#define RTC_SCL 23
+
+#define TFT_CS    16
+#define TFT_A0    17
+#define TFT_SDA   23
+#define TFT_SCK    5
+#define TFT_RESET  9
+
+#define LED_BUILTIN 22
+Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_A0, TFT_SDA, TFT_SCK, TFT_RESET);
+
+BLE_RTC_DS1307 rtc;
 
 Dcf77    mDcf;
-DateTime mNow;
+DCFDateTime mNow;
 
 
 bool mDcfStatus = false;
@@ -113,7 +155,7 @@ void showWeather() {
 
   log_d("dcw=%s, ncw=%s, xwh=%s, rpb=%s, anm=%s, tem=%d%sC", weather[dcw].c_str(), weather[ncw].c_str(), winddirection[xwh], probprecip[rpb], anm==0 ? "yes" : "no", tem-22, String( degreeSign ).c_str() );
 
-  DateTime mDcfTime = mDcf.GetTime();
+  DCFDateTime mDcfTime = mDcf.GetTime();
   // uint8_t yOff, m, d, hh, mm;
 
   fourdayforecast = ((mDcfTime.hh) % 3) * 20; 
@@ -197,7 +239,7 @@ void showWeather() {
     temperatureStr = "<-21 " + String(degreeSign) + "C";
   } else if (tem == 63) {
     temperatureStr = ">40 " + String(degreeSign) + "C";
-  } else /*if ((tem != 0) & (tem != 63))*/ {
+  } else {
     temperatureStr = String(tem - 22) + String(degreeSign) + "C";
   }
   // Night temperature is minimum
@@ -208,15 +250,172 @@ void showWeather() {
     temperatureStr += " maximum";
   }
   Serial.printf("Temperature       = %s %02x %s\n", meteodata.substring(16, 22).c_str(), tem, temperatureStr.c_str());
-  Serial.printf("Decoder status    =     %s    %s\n", meteodata.substring(22, 24) == "10" ? "OK" : "NOT OK");
+  Serial.printf("Decoder status    =     %s    %s\n", meteodata.substring(22, 24), meteodata.substring(22, 24) == "10" ? "OK" : "NOT OK");
 }
 
 
 
 
 
+float steps = ((2*PI)/MSG_SIZE);
+float invsteps = 1/steps;
+float r1 = 54;
+float r2 = 60;
+#define ST7735_GRAY tft.Color565(64,64,64)
+
+
+
+
+//====================================================================================
+//   Decode and render the Jpeg image onto the TFT screen
+//====================================================================================
+#define minimum(a,b)     (((a) < (b)) ? (a) : (b))
+void jpegRender(int xpos, int ypos) {
+
+  // retrieve infomration about the image
+  uint16_t  *pImg;
+  uint16_t mcu_w = JpegDec.MCUWidth;
+  uint16_t mcu_h = JpegDec.MCUHeight;
+  uint32_t max_x = JpegDec.width;
+  uint32_t max_y = JpegDec.height;
+
+  // Jpeg images are draw as a set of image block (tiles) called Minimum Coding Units (MCUs)
+  // Typically these MCUs are 16x16 pixel blocks
+  // Determine the width and height of the right and bottom edge image blocks
+  uint32_t min_w = minimum(mcu_w, max_x % mcu_w);
+  uint32_t min_h = minimum(mcu_h, max_y % mcu_h);
+
+  // save the current image block size
+  uint32_t win_w = mcu_w;
+  uint32_t win_h = mcu_h;
+
+  // record the current time so we can measure how long it takes to draw an image
+  uint32_t drawTime = millis();
+
+  // save the coordinate of the right and bottom edges to assist image cropping
+  // to the screen size
+  max_x += xpos;
+  max_y += ypos;
+
+  // read each MCU block until there are no more
+  while ( JpegDec.read()) {
+
+    // save a pointer to the image block
+    pImg = JpegDec.pImage;
+
+    // calculate where the image block should be drawn on the screen
+    int mcu_x = JpegDec.MCUx * mcu_w + xpos;
+    int mcu_y = JpegDec.MCUy * mcu_h + ypos;
+
+    // check if the image block size needs to be changed for the right edge
+    if (mcu_x + mcu_w <= max_x) win_w = mcu_w;
+    else win_w = min_w;
+
+    // check if the image block size needs to be changed for the bottom edge
+    if (mcu_y + mcu_h <= max_y) win_h = mcu_h;
+    else win_h = min_h;
+
+    // copy pixels into a contiguous block
+    if (win_w != mcu_w)
+    {
+      for (int h = 1; h < win_h-1; h++)
+      {
+        memcpy(pImg + h * win_w, pImg + (h + 1) * mcu_w, win_w << 1);
+      }
+    }
+
+    // draw image MCU block only if it will fit on the screen
+    if ( ( mcu_x + win_w) <= tft.width() && ( mcu_y + win_h) <= tft.height())
+    {
+      tft.drawRGBBitmap(mcu_x, mcu_y, pImg, win_w, win_h);
+    }
+
+    else if ( ( mcu_y + win_h) >= tft.height()) JpegDec.abort();
+
+  }
+
+  // calculate how long it took to draw the image
+  drawTime = millis() - drawTime; // Calculate the time it took
+
+  // print the results to the serial port
+  Serial.print  ("Total render time was    : "); Serial.print(drawTime); Serial.println(" ms");
+  Serial.println("=====================================");
+
+}
+
+void tft_drawJpg(const uint8_t * jpg_data, size_t jpg_len, uint16_t x=0, uint16_t y=0, uint16_t maxWidth=0, uint16_t maxHeight=0) {
+  // Open the named file (the Jpeg decoder library will close it)
+  // Use one of the following methods to initialise the decoder:
+  boolean decoded = JpegDec.decodeArray(jpg_data, jpg_len);
+  //boolean decoded = JpegDec.decodeSdFile(filename);  // or pass the filename (String or character array)
+  if (decoded) {
+    jpegRender(x, y);
+  } else {
+    Serial.println("Jpeg file format not supported!");
+  }
+}
+
+
+
+void showRtcTime() {
+    DateTime now = rtc.now();
+    
+    Serial.print(now.year(), DEC);
+    Serial.print('/');
+    Serial.print(now.month(), DEC);
+    Serial.print('/');
+    Serial.print(now.day(), DEC);
+    Serial.print(' ');
+    Serial.print(now.hour(), DEC);
+    Serial.print(':');
+    Serial.print(now.minute(), DEC);
+    Serial.print(':');
+    Serial.print(now.second(), DEC);
+    Serial.println();
+    
+    Serial.print(" since 1970 = ");
+    Serial.print(now.unixtime());
+    Serial.print("s = ");
+    Serial.print(now.unixtime() / 86400L);
+    Serial.println("d");
+    
+    Serial.println();
+}
+
+
+
 void setup(void) {
   Serial.begin(115200);
+
+
+  pinMode(27,INPUT);//Backlight:27
+  digitalWrite(27,HIGH);//New version added to backlight control
+  tft.initR(INITR_18GREENTAB);                             // 1.44 v2.1
+  tft.fillScreen(ST7735_BLACK);                            // CLEAR
+  tft.setTextColor(0x5FCC);                                // GREEN
+  tft.setRotation(1);                                      // 
+
+
+  rtc.begin(RTC_SDA, RTC_SCL);
+  setSyncProvider(rtc.get);   // the function to get the time from the RTC
+  if (timeStatus() != timeSet) {
+    log_e("Unable to sync with the RTC");
+  } else {
+    log_d("RTC has set the system time");
+  }
+  delay(10);
+  showRtcTime();
+  //rtc.adjust(DateTime(__DATE__, __TIME__));
+
+  for(float i=-PI;i<PI;i+=steps) {
+    float x1 = (-sin(i)*r1) + 80;
+    float y1 = (cos(i)*r1) + 64;
+    float x2 = (-sin(i)*r2) + 80;
+    float y2 = (cos(i)*r2) + 64;
+    tft.drawCircle(x1, y1, 2, ST7735_GRAY);
+    tft.drawCircle(x2, y2, 2, ST7735_GRAY);
+  }
+  
   for (int i=0;i<61;i++){
     weathermemory[i]="";
     for (int j=0;j<24;j++){
@@ -226,12 +425,51 @@ void setup(void) {
   }
   mDcf.Init(RADIO_DIGITAL_PIN, RADIO_POWERDOWN_PIN, RADIO_AUTOGAIN_PIN);
   Serial.printf("DCF77 Time/Weather reporter by tobozo, Built on %s %s\n", __DATE__, __TIME__);
-  mNow = DateTime(BUILDTM_YEAR, BUILDTM_MONTH, BUILDTM_DAY, BUILDTM_HOUR, BUILDTM_MIN);
+  mNow = DCFDateTime(BUILDTM_YEAR, BUILDTM_MONTH, BUILDTM_DAY, BUILDTM_HOUR, BUILDTM_MIN);
   Serial.println("Setup done ");
   Serial.println( String( clockSign).c_str() );
+
+  tft_drawJpg(img_antenna_jpg, img_antenna_jpg_len, ( tft.width()/2 - 48/2 ), ( tft.height()/2 - 48/2 ), 48, 48);
+  //tft.drawBitmap( ( tft.width()/2 - 75/2 ), (tft.height()-75)/2, img_antenna_bmp
+  //img_antenna_bmp_len
+
+  /*
+  ssd1327Init(0x3c, 0, 0, 25, 32, 1000000UL);
+  ssd1327Fill(0);
+  ssd1327SetContrast(255);
+
+  display.begin();
+  display.clearBuffer();
+  display.clearBuffer();
+
+  float steps = ((2*PI)/60);
+  float r1 = 40;
+  float r2 = 36;
+  
+  //display.firstPage();
+
+  for(float i=-PI;i<PI;i+=steps) {
+    float x1 = (sin(i)*r1) + 64;
+    float y1 = (cos(i)*r1) + 64;
+    float x2 = (sin(i)*r2) + 64;
+    float y2 = (cos(i)*r2) + 64;
+    
+    //do {
+      display.drawLine(x1, y1-16, x2, y2-16);
+    //} while( 
+    //  display.nextPage(); 
+    //);
+  }
+  display.sendBuffer();
+  //ssd1327DrawLine(starXPrev, starYPrev, star[i][3], star[i][4], starColor);
+  */
+  
+  //memcpy(mDcf.mMessage, mDcf.mMessageHistory[1], MSG_SIZE);
 }
 
 
+bool mMessageHistory[2][MSG_SIZE];
+byte lastmBitCounter;
 
 void loop(void) {
 
@@ -240,14 +478,34 @@ void loop(void) {
   int lDcfState = mDcf.Run();
   unsigned long nowMs = millis();
   unsigned long diff = nowMs - mPrevTimeTimeMs;
+  int16_t  x1, y1;
+  uint16_t w, h;
 
+
+  if( (lDcfState != DCF_STATE_SAMPLING) && lastmBitCounter != mDcf.mBitCounter ) {
+    lastmBitCounter = mDcf.mBitCounter-1;
+    if( lastmBitCounter==255 ) lastmBitCounter = MSG_SIZE;
+    float i = (float(lastmBitCounter - MSG_SIZE/2) / MSG_SIZE) *2*PI;
+    float x1 = (-sin(i)*r1) + 80;
+    float y1 = (cos(i)*r1) + 64;
+    if( mDcf.mMessage[lastmBitCounter] ) {
+      tft.fillCircle(x1, y1, 2, ST7735_BLUE);
+    } else {
+      tft.fillCircle(x1, y1, 2, ST7735_BLACK);
+      tft.drawCircle(x1, y1, 2, ST7735_GRAY);
+    }
+    mMessageHistory[0][lastmBitCounter] = mDcf.mMessage[lastmBitCounter];
+    // antenna blink
+    tft.fillCircle(79, 51, 3, mDcfStatus ? ST7735_BLUE : ST7735_WHITE);
+  }
   
+
   if (lDcfState == DCF_STATE_NEWWEATHER) {
     //byte lSection = mDcf.GetWeatherSection();
     //byte area = mDcf.GetWeatherArea();
     byte aInfo[WEATHER_INFO_SIZE];
     if (mDcf.GetWeatherInfo(aInfo)) {
-      log_d( "Ciphered Weather Data: %s", mDcf.weatherData );
+      //log_d( "Ciphered Weather Data: %s", mDcf.weatherData );
       meteodata = decToBinStr(aInfo);
       showWeather();
     } else {
@@ -268,8 +526,21 @@ void loop(void) {
       if ((lNowMinute == 0 || lNowMinute == 30)) { // once every 30 minutes
         //registerPressure((byte)mCurrentPress);
       }
+
       // does the time and/or date on the screen need an update?
-      //UpdateDisplay(DISPLAY_TIME);
+      
+      const String timeStr = mNow.GetTimeStr( mDcfStatus ? ":" : " " );
+      tft.getTextBounds(timeStr, (int16_t)0, (int16_t)0,  &x1, &y1, &w, &h);
+      tft.setCursor(tft.width()/2 - w/2, 24);
+      tft.setTextColor(ST7735_WHITE, ST7735_BLACK);
+      tft.print( mNow.GetTimeStr( mDcfStatus ? ":" : " " ) );
+      
+      const String dateStr = mNow.GetDateStr();
+      tft.getTextBounds(dateStr, (int16_t)0, (int16_t)0,  &x1, &y1, &w, &h);
+      tft.setCursor(tft.width()/2 - w/2, 92);
+      tft.setTextColor(ST7735_WHITE, ST7735_BLACK);
+      tft.print( dateStr );
+      
       mPrevMinute = lNowMinute;  // mNow.minute();
     }
     mPrevTimeTimeMs = nowMs;
@@ -279,18 +550,48 @@ void loop(void) {
   // although it looks like it only appears once a second
   if (lDcfState == DCF_STATE_NEWSECOND) { // once every second
     //Serial.print("%"); // show indicator of DCF signal ?
-    if (mDcfStatus) {
-      //mTft.print(mDcf.TimeIsValid()?"*":"+");
+  
+    if(mDcf.TimeIsValid()) {
+      mNow = mDcf.GetTime();
+
+      const String timeStr = mNow.GetTimeStr( mDcfStatus ? ":" : " " );
+      tft.getTextBounds(timeStr, (int16_t)0, (int16_t)0,  &x1, &y1, &w, &h);
+      tft.setCursor(tft.width()/2 - w/2, 24);
+      tft.setTextColor(ST7735_WHITE, ST7735_BLACK);
+      tft.print( mNow.GetTimeStr( mDcfStatus ? ":" : " " ) );
+      
     }
+
     mDcfStatus = !mDcfStatus;   // toggle indicator
   }
 
   // TODO now every loop the same questionis asked, better only ask once
-  if (lDcfState == DCF_STATE_NEWMINUTE) {
+  if (lDcfState == DCF_STATE_NEWMINUTE || lDcfState == DCF_STATE_NEWWEATHER) {
     // new time available
     //Serial.print("&");
+    for(uint8_t r=0;r<MSG_SIZE;r++) {
+      float i = (float(r - MSG_SIZE/2) / MSG_SIZE) *2*PI;
+      //for(float i=-PI;i<PI;i+=steps)
+      float x1 = (-sin(i)*r1) + 80;
+      float y1 = (cos(i)*r1) + 64;
+      float x2 = (-sin(i)*r2) + 80;
+      float y2 = (cos(i)*r2) + 64;
+      int msgIndex = (i+PI)*invsteps;
+      mMessageHistory[1][msgIndex] = mMessageHistory[0][msgIndex];
+      mMessageHistory[0][msgIndex] = false;
+      //mDcf.mMessage[msgIndex] = false;
+      if( mMessageHistory[1][msgIndex] ) {
+        tft.fillCircle(x2, y2, 2, ST7735_GREEN);
+      } else {
+        tft.fillCircle(x2, y2, 2, ST7735_BLACK);
+        tft.drawCircle(x2, y2, 2, ST7735_GRAY);
+      }
+      tft.fillCircle(x1, y1, 2, ST7735_BLACK);
+      tft.drawCircle(x1, y1, 2, ST7735_GRAY);
+    }
     if (mDcf.TimeIsValid()) {
       //Serial.print("*");
     }
+    //*mDcf.mMessage = false;
   }
 }
